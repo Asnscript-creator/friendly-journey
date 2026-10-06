@@ -1,8 +1,6 @@
---==================================================
+
 -- STEAL AN EGG - ALL IN ONE SYSTEM
 -- Roblox Studio / ServerScriptService
---==================================================
-
 local Players = game:GetService("Players")
 local DataStoreService = game:GetService("DataStoreService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
