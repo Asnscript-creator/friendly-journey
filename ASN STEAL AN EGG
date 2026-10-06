@@ -1,0 +1,820 @@
+--========================================================
+-- STEAL AN EGG - ALL IN ONE
+-- Untuk game milik sendiri / Roblox Studio
+--========================================================
+
+local Players = game:GetService("Players")
+local DataStoreService = game:GetService("DataStoreService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local MarketplaceService = game:GetService("MarketplaceService")
+
+------------------------------------------------------------
+-- CONFIG
+------------------------------------------------------------
+
+local Config = {
+	VIP_GAMEPASS_ID = 0, -- isi ID GamePass VIP
+
+	AUTO_REWARD_TIME = 60,
+	AUTO_EVENT_TIME = 300,
+	EVENT_DURATION = 120,
+
+	EGG_DISTANCE = 25,
+	TREADMILL_DISTANCE = 12,
+	MAX_INVENTORY = 100,
+
+	TREADMILL_REWARD = 2,
+	AUTO_REWARD = 50,
+	EVENT_REWARD = 500,
+	VIP_MULTIPLIER = 2,
+
+	EGG_RARITY = {
+		{Name = "Common", Chance = 60, Reward = 10},
+		{Name = "Uncommon", Chance = 25, Reward = 25},
+		{Name = "Rare", Chance = 10, Reward = 75},
+		{Name = "Epic", Chance = 4, Reward = 200},
+		{Name = "Legendary", Chance = 0.9, Reward = 1000},
+		{Name = "Mythic", Chance = 0.1, Reward = 10000},
+	}
+}
+
+-- Ganti dengan UserId kamu
+local ADMINS = {
+	[123456789] = true,
+}
+
+------------------------------------------------------------
+-- REMOTES
+------------------------------------------------------------
+
+local Remotes = Instance.new("Folder")
+Remotes.Name = "StealEggRemotes"
+Remotes.Parent = ReplicatedStorage
+
+local function Remote(name)
+	local r = Instance.new("RemoteEvent")
+	r.Name = name
+	r.Parent = Remotes
+	return r
+end
+
+local CollectEgg = Remote("CollectEgg")
+local StealEgg = Remote("StealEgg")
+local ToggleSetting = Remote("ToggleSetting")
+local StartEvent = Remote("StartEvent")
+local AdminAction = Remote("AdminAction")
+
+------------------------------------------------------------
+-- DATA
+------------------------------------------------------------
+
+local Store = DataStoreService:GetDataStore("StealEgg_V2")
+local Data = {}
+
+local DefaultData = {
+	Coins = 0,
+	Eggs = 0,
+	StolenEggs = 0,
+
+	Inventory = {},
+
+	Settings = {
+		AutoCollect = false,
+		AutoReward = true,
+		AutoEvent = false,
+		VisualEgg = true,
+		VisualEvent = true,
+	}
+}
+
+local function CopyTable(t)
+	local new = {}
+
+	for k,v in pairs(t) do
+		if type(v) == "table" then
+			new[k] = CopyTable(v)
+		else
+			new[k] = v
+		end
+	end
+
+	return new
+end
+
+------------------------------------------------------------
+-- RARITY
+------------------------------------------------------------
+
+local function GetRarity()
+
+	local roll = math.random() * 100
+	local total = 0
+
+	for _, rarity in ipairs(Config.EGG_RARITY) do
+
+		total += rarity.Chance
+
+		if roll <= total then
+			return rarity
+		end
+	end
+
+	return Config.EGG_RARITY[1]
+end
+
+------------------------------------------------------------
+-- ADMIN
+------------------------------------------------------------
+
+local function IsAdmin(player)
+	return ADMINS[player.UserId] == true
+end
+
+------------------------------------------------------------
+-- STATS
+------------------------------------------------------------
+
+local function CreateStats(player, data)
+
+	local leaderstats = Instance.new("Folder")
+	leaderstats.Name = "leaderstats"
+	leaderstats.Parent = player
+
+	local Coins = Instance.new("IntValue")
+	Coins.Name = "Coins"
+	Coins.Value = data.Coins
+	Coins.Parent = leaderstats
+
+	local Eggs = Instance.new("IntValue")
+	Eggs.Name = "Eggs"
+	Eggs.Value = data.Eggs
+	Eggs.Parent = leaderstats
+
+	local Stolen = Instance.new("IntValue")
+	Stolen.Name = "StolenEggs"
+	Stolen.Value = data.StolenEggs
+	Stolen.Parent = leaderstats
+end
+
+------------------------------------------------------------
+-- LOAD DATA
+------------------------------------------------------------
+
+local function Load(player)
+
+	local data
+
+	local success, result = pcall(function()
+		return Store:GetAsync("Player_" .. player.UserId)
+	end)
+
+	if success and result then
+		data = result
+	else
+		data = CopyTable(DefaultData)
+	end
+
+	Data[player] = data
+
+	CreateStats(player, data)
+
+	--------------------------------------------------------
+	-- VIP
+	--------------------------------------------------------
+
+	local vip = false
+
+	if Config.VIP_GAMEPASS_ID > 0 then
+
+		pcall(function()
+			vip = MarketplaceService:UserOwnsGamePassAsync(
+				player.UserId,
+				Config.VIP_GAMEPASS_ID
+			)
+		end)
+	end
+
+	player:SetAttribute("VIP", vip)
+
+	--------------------------------------------------------
+	-- PRIVATE SERVER
+	--------------------------------------------------------
+
+	player:SetAttribute(
+		"PrivateServer",
+		game.PrivateServerId ~= ""
+	)
+end
+
+------------------------------------------------------------
+-- SAVE DATA
+------------------------------------------------------------
+
+local function Save(player)
+
+	local data = Data[player]
+
+	if not data then
+		return
+	end
+
+	local stats = player:FindFirstChild("leaderstats")
+
+	if stats then
+
+		data.Coins = stats.Coins.Value
+		data.Eggs = stats.Eggs.Value
+		data.StolenEggs = stats.StolenEggs.Value
+	end
+
+	pcall(function()
+		Store:SetAsync(
+			"Player_" .. player.UserId,
+			data
+		)
+	end)
+end
+
+------------------------------------------------------------
+-- PLAYER
+------------------------------------------------------------
+
+Players.PlayerAdded:Connect(function(player)
+
+	Load(player)
+
+	print(player.Name .. " loaded Steal an Egg")
+end)
+
+Players.PlayerRemoving:Connect(function(player)
+
+	Save(player)
+
+	Data[player] = nil
+end)
+
+------------------------------------------------------------
+-- CREATE EGG
+------------------------------------------------------------
+
+local function CreateEgg(position)
+
+	local rarity = GetRarity()
+
+	local egg = Instance.new("Part")
+
+	egg.Name = rarity.Name .. "_Egg"
+	egg.Shape = Enum.PartType.Ball
+	egg.Size = Vector3.new(2,2,2)
+
+	egg.Position = position
+
+	egg.Anchored = true
+	egg.CanCollide = false
+
+	egg:SetAttribute("IsEgg", true)
+	egg:SetAttribute("Rarity", rarity.Name)
+	egg:SetAttribute("Reward", rarity.Reward)
+
+	egg.Parent = workspace
+
+	--------------------------------------------------------
+	-- VISUAL
+	--------------------------------------------------------
+
+	local billboard = Instance.new("BillboardGui")
+
+	billboard.Size = UDim2.new(0,150,0,50)
+	billboard.StudsOffset = Vector3.new(0,3,0)
+	billboard.AlwaysOnTop = true
+	billboard.Parent = egg
+
+	local label = Instance.new("TextLabel")
+
+	label.Size = UDim2.fromScale(1,1)
+	label.BackgroundTransparency = 1
+
+	label.Text =
+		"🥚 " ..
+		rarity.Name ..
+		"\n+" ..
+		rarity.Reward ..
+		" Coins"
+
+	label.TextScaled = true
+	label.Parent = billboard
+
+	return egg
+end
+
+------------------------------------------------------------
+-- EGG SPAWNER
+------------------------------------------------------------
+
+task.spawn(function()
+
+	while true do
+
+		task.wait(10)
+
+		local folder =
+			workspace:FindFirstChild("EggSpawn")
+
+		if folder then
+
+			local points = folder:GetChildren()
+
+			if #points > 0 then
+
+				local point =
+					points[math.random(#points)]
+
+				if point:IsA("BasePart") then
+
+					CreateEgg(
+						point.Position +
+						Vector3.new(0,2,0)
+					)
+				end
+			end
+		end
+	end
+end)
+
+------------------------------------------------------------
+-- COLLECT / STEAL
+------------------------------------------------------------
+
+local function GetPlayerRoot(player)
+
+	local character = player.Character
+
+	if not character then
+		return nil
+	end
+
+	return character:FindFirstChild(
+		"HumanoidRootPart"
+	)
+end
+
+local function Collect(player, egg, stolen)
+
+	local data = Data[player]
+
+	if not data then
+		return
+	end
+
+	if not egg then
+		return
+	end
+
+	if not egg:IsDescendantOf(workspace) then
+		return
+	end
+
+	if egg:GetAttribute("IsEgg") ~= true then
+		return
+	end
+
+	local root = GetPlayerRoot(player)
+
+	if not root then
+		return
+	end
+
+	local distance =
+		(root.Position - egg.Position).Magnitude
+
+	if distance > Config.EGG_DISTANCE then
+		return
+	end
+
+	if #data.Inventory >= Config.MAX_INVENTORY then
+		return
+	end
+
+	local rarity =
+		egg:GetAttribute("Rarity")
+
+	local reward =
+		egg:GetAttribute("Reward") or 1
+
+	table.insert(
+		data.Inventory,
+		{
+			Rarity = rarity,
+			Reward = reward
+		}
+	)
+
+	data.Eggs += 1
+
+	if stolen then
+		data.StolenEggs += 1
+	end
+
+	local stats =
+		player:FindFirstChild("leaderstats")
+
+	if stats then
+
+		stats.Eggs.Value =
+			data.Eggs
+
+		stats.StolenEggs.Value =
+			data.StolenEggs
+
+		local finalReward = reward
+
+		if player:GetAttribute("VIP") then
+			finalReward *=
+				Config.VIP_MULTIPLIER
+		end
+
+		stats.Coins.Value +=
+			finalReward
+
+		data.Coins =
+			stats.Coins.Value
+	end
+
+	egg:Destroy()
+end
+
+CollectEgg.OnServerEvent:Connect(
+	function(player, egg)
+		Collect(player, egg, false)
+	end
+)
+
+StealEgg.OnServerEvent:Connect(
+	function(player, egg)
+		Collect(player, egg, true)
+	end
+)
+
+------------------------------------------------------------
+-- AUTO COLLECT
+------------------------------------------------------------
+
+task.spawn(function()
+
+	while true do
+
+		task.wait(1)
+
+		for player, data in pairs(Data) do
+
+			if data.Settings.AutoCollect then
+
+				local root =
+					GetPlayerRoot(player)
+
+				if root then
+
+					for _, egg in ipairs(
+						workspace:GetChildren()
+					) do
+
+						if egg:IsA("BasePart")
+							and egg:GetAttribute(
+								"IsEgg"
+							) == true then
+
+							if (
+								root.Position -
+								egg.Position
+							).Magnitude
+								<= Config.EGG_DISTANCE then
+
+								Collect(
+									player,
+									egg,
+									false
+								)
+
+								break
+							end
+						end
+					end
+				end
+			end
+		end
+	end
+end)
+
+------------------------------------------------------------
+-- SETTINGS
+------------------------------------------------------------
+
+ToggleSetting.OnServerEvent:Connect(
+	function(player, setting, value)
+
+		local data = Data[player]
+
+		if not data then
+			return
+		end
+
+		if data.Settings[setting] ~= nil
+			and type(value) == "boolean" then
+
+			data.Settings[setting] = value
+		end
+	end
+)
+
+------------------------------------------------------------
+-- AUTO REWARD
+------------------------------------------------------------
+
+task.spawn(function()
+
+	while true do
+
+		task.wait(
+			Config.AUTO_REWARD_TIME
+		)
+
+		for player, data in pairs(Data) do
+
+			if data.Settings.AutoReward then
+
+				local stats =
+					player:FindFirstChild(
+						"leaderstats"
+					)
+
+				if stats then
+
+					local reward =
+						Config.AUTO_REWARD
+
+					if player:GetAttribute("VIP") then
+						reward *=
+							Config.VIP_MULTIPLIER
+					end
+
+					stats.Coins.Value +=
+						reward
+
+					data.Coins =
+						stats.Coins.Value
+				end
+			end
+		end
+	end
+end)
+
+------------------------------------------------------------
+-- TREADMILL
+------------------------------------------------------------
+
+task.spawn(function()
+
+	while true do
+
+		task.wait(1)
+
+		local treadmill =
+			workspace:FindFirstChild(
+				"Treadmill"
+			)
+
+		if treadmill then
+
+			for player, data in pairs(Data) do
+
+				local root =
+					GetPlayerRoot(player)
+
+				if root then
+
+					local distance =
+						(root.Position -
+							treadmill.Position)
+							.Magnitude
+
+					if distance <=
+						Config.TREADMILL_DISTANCE then
+
+						local stats =
+							player:FindFirstChild(
+								"leaderstats"
+							)
+
+						if stats then
+
+							local reward =
+								Config.TREADMILL_REWARD
+
+							if player:GetAttribute(
+								"VIP"
+							) then
+
+								reward *=
+									Config.VIP_MULTIPLIER
+							end
+
+							stats.Coins.Value +=
+								reward
+
+							data.Coins =
+								stats.Coins.Value
+						end
+					end
+				end
+			end
+		end
+	end
+end)
+
+------------------------------------------------------------
+-- EVENT
+------------------------------------------------------------
+
+local EventActive = false
+
+local function StartEvent()
+
+	if EventActive then
+		return
+	end
+
+	EventActive = true
+
+	print("🔥 GLOBAL EGG EVENT STARTED!")
+
+	for player, data in pairs(Data) do
+
+		local stats =
+			player:FindFirstChild(
+				"leaderstats"
+			)
+
+		if stats then
+
+			local reward =
+				Config.EVENT_REWARD
+
+			if player:GetAttribute("VIP") then
+				reward *=
+					Config.VIP_MULTIPLIER
+			end
+
+			stats.Coins.Value += reward
+
+			data.Coins =
+				stats.Coins.Value
+		end
+	end
+
+	task.delay(
+		Config.EVENT_DURATION,
+		function()
+
+			EventActive = false
+
+			print("🔥 GLOBAL EGG EVENT ENDED!")
+		end
+	)
+end
+
+------------------------------------------------------------
+-- AUTO EVENT
+------------------------------------------------------------
+
+task.spawn(function()
+
+	while true do
+
+		task.wait(
+			Config.AUTO_EVENT_TIME
+		)
+
+		StartEvent()
+	end
+end)
+
+StartEvent.OnServerEvent:Connect(
+	function(player)
+
+		-- hanya admin yang boleh
+		if IsAdmin(player) then
+			StartEvent()
+		end
+	end
+)
+
+------------------------------------------------------------
+-- ADMIN ABUSE
+------------------------------------------------------------
+
+AdminAction.OnServerEvent:Connect(
+	function(player, action, amount)
+
+		if not IsAdmin(player) then
+			return
+		end
+
+		local stats =
+			player:FindFirstChild(
+				"leaderstats"
+			)
+
+		if not stats then
+			return
+		end
+
+		amount = tonumber(amount) or 0
+
+		if action == "GiveCoins" then
+
+			if amount > 0 then
+				stats.Coins.Value += amount
+			end
+
+		elseif action == "GiveEgg" then
+
+			if amount > 0 then
+
+				for i = 1, math.min(amount,100) do
+
+					table.insert(
+						Data[player].Inventory,
+						{
+							Rarity = "Admin",
+							Reward = 1000
+						}
+					)
+
+					stats.Eggs.Value += 1
+				end
+			end
+
+		elseif action == "GlobalEvent" then
+
+			StartEvent()
+
+		elseif action == "SpawnEgg" then
+
+			local root =
+				GetPlayerRoot(player)
+
+			if root then
+				CreateEgg(
+					root.Position +
+					Vector3.new(0,3,0)
+				)
+			end
+		end
+	end
+)
+
+------------------------------------------------------------
+-- AUTO SAVE
+------------------------------------------------------------
+
+task.spawn(function()
+
+	while true do
+
+		task.wait(60)
+
+		for player in pairs(Data) do
+			Save(player)
+		end
+	end
+end)
+
+------------------------------------------------------------
+-- SERVER CLOSE
+------------------------------------------------------------
+
+game:BindToClose(function()
+
+	for player in pairs(Data) do
+		Save(player)
+	end
+
+	task.wait(2)
+end)
+
+print("======================================")
+print("🥚 STEAL AN EGG SYSTEM LOADED")
+print("✅ Egg Rarity")
+print("✅ Collect / Steal")
+print("✅ Auto Collect")
+print("✅ Auto Reward")
+print("✅ Treadmill")
+print("✅ Events")
+print("✅ Auto Event")
+print("✅ Inventory")
+print("✅ VIP")
+print("✅ Leaderboard")
+print("✅ Config Save")
+print("✅ Private Server Detection")
+print("✅ Admin Abuse")
+print("======================================")
